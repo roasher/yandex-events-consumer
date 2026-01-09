@@ -1,0 +1,61 @@
+# Telegram Bot Configuration
+# Spring Boot automatically converts these properties to environment variables
+
+# Application Configuration
+spring:
+  application:
+    name: telegram-bot
+
+  # H2 Database Configuration
+  datasource:
+    url: jdbc:h2:file:./data/waitlist_db
+    driverClassName: org.h2.Driver
+    username: sa
+    password: ""
+
+  h2:
+    console:
+      enabled: false
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+
+# Events API Configuration
+events:
+  # Cookies для аутентификации в events.yandex-team.ru API
+  # Получить cookies можно из браузера: DevTools -> Network -> Headers -> Cookie
+  # Или скопировать из curl запроса: -b 'ваши_cookies'
+  # Can also be set via environment variable: EVENTS_API_COOKIES
+  api:
+    cookies: ""
+
+  # Default preferences (if set, bot won't ask for them)
+  default:
+    # Default city ID (integer, e.g., 1 for Moscow)
+    city: ""
+    # Default category IDs (array of integers, e.g., [1, 2, 3] or leave empty for all categories)
+    # Can also be set via environment variable: EVENTS_DEFAULT_CATEGORIES (comma-separated)
+    categories: []
+
+  # Event polling configuration
+  poll:
+    # List of event names to watch for availability
+    # When an event with one of these names becomes available, it will be automatically booked
+    # Example: ["Event Name 1", "Event Name 2", "Event Name 3"]
+    # Can also be set via environment variable: EVENTS_POLL_NAMES (comma-separated)
+    names: []
+
+  # Event hold configuration
+  hold:
+    # List of event links (URLs) or event IDs to hold (disable booking) on startup
+    # These events will be held automatically when the application starts
+    # Supports both URLs and direct event IDs:
+    #   - URLs: https://events.yandex-team.ru/?city=1&eventId=b27b9fb8-895a-4b1d-bc56-704e92f46457
+    #   - URLs: https://events.yandex-team.ru/events/b27b9fb8-895a-4b1d-bc56-704e92f46457?city=1
+    #   - Direct IDs: b27b9fb8-895a-4b1d-bc56-704e92f46457
+    # Example: ["https://events.yandex-team.ru/?city=1&eventId=event-id-1", "event-id-2"]
+    # Can also be set via environment variable: EVENTS_HOLD_LINKS (comma-separated)
+    links: []
+

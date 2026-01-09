@@ -1,0 +1,29 @@
+target/
+!.mvn/wrapper/maven-wrapper.jar
+*.class
+*.log
+*.jar
+*.war
+*.ear
+.DS_Store
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# Secrets
+local-secrets.sh
+run.sh
+.env
+.env.local
+*.secret
+# H2 Database files
+data/
+*.mv.db
+*.trace.db
+*.lock.db
+*.data.db
+*.h2.db
+run.env
+src/test/java/com/example/telegrambot/integration/YandexEventsBookingIntegrationTest.java
