@@ -1,0 +1,16 @@
+# Configuration for server-only profile
+# Web server is enabled to allow graceful shutdown and database lock release
+
+server:
+  # Use a different port to avoid conflicts
+  port: 8081
+
+spring:
+  datasource:
+    hikari:
+      # Ensure connection pool is properly closed on shutdown
+      connection-timeout: 30000
+      maximum-pool-size: 5
+      minimum-idle: 1
+      idle-timeout: 300000
+      max-lifetime: 600000

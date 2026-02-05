@@ -14,6 +14,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Service
+@org.springframework.context.annotation.Profile("!server-only")
 public class WaitlistMonitoringService {
 
     private static final Logger logger = LoggerFactory.getLogger(WaitlistMonitoringService.class);

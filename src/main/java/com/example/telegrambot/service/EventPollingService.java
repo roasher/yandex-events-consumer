@@ -341,6 +341,13 @@ public class EventPollingService {
         }
 
         try {
+            // Check if TelegramBot bean is available (not available in server-only mode)
+            if (!applicationContext.containsBean("telegramBot")) {
+                logger.info("TelegramBot not available (server-only mode). Event {} booked successfully: {}", 
+                    eventTitle, eventId);
+                return;
+            }
+
             TelegramBot telegramBot = applicationContext.getBean(TelegramBot.class);
             String eventUrl = String.format("https://events.yandex-team.ru/events/%s", eventId);
             String message = String.format(

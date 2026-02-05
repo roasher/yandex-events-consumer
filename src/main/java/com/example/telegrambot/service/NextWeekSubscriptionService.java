@@ -13,6 +13,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
+@org.springframework.context.annotation.Profile("!server-only")
 public class NextWeekSubscriptionService {
 
     private static final Logger logger = LoggerFactory.getLogger(NextWeekSubscriptionService.class);

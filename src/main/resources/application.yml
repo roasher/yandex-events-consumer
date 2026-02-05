@@ -5,6 +5,12 @@
 spring:
   application:
     name: telegram-bot
+  
+  # Active profiles: use 'server-only' to run without Telegram bot
+  # Example: java -jar app.jar --spring.profiles.active=server-only
+  # Or set environment variable: SPRING_PROFILES_ACTIVE=server-only
+  profiles:
+    active: default
 
   # H2 Database Configuration
   datasource:
@@ -46,6 +52,20 @@ events:
     # Example: ["Event Name 1", "Event Name 2", "Event Name 3"]
     # Can also be set via environment variable: EVENTS_POLL_NAMES (comma-separated)
     names: []
+    
+    # Time to start polling automatically (server-only mode)
+    # Format: HH:mm (24-hour format, e.g., "09:30" or "14:00")
+    # Example: start-time: "09:00"
+    # Can also be set via environment variable: EVENTS_POLL_START_TIME
+    # If both start-time and end-time are not set, polling starts immediately on app startup
+    start-time: ""
+    
+    # Time to stop polling automatically (server-only mode)
+    # Format: HH:mm (24-hour format, e.g., "18:00" or "22:30")
+    # Example: end-time: "18:00"
+    # Can also be set via environment variable: EVENTS_POLL_END_TIME
+    # If not set and start-time is set, polling will run indefinitely until manually stopped
+    end-time: ""
 
   # Event hold configuration
   hold:

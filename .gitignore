@@ -51,3 +51,5 @@ Thumbs.db
 # MongoDB data directory (embedded MongoDB)
 data/
 
+.run
+/run-server-only.sh

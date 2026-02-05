@@ -18,6 +18,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
+@org.springframework.context.annotation.Profile("!server-only")
 public class NextWeekMonitoringService {
 
     private static final Logger logger = LoggerFactory.getLogger(NextWeekMonitoringService.class);

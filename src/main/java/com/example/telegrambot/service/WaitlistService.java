@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Optional;
 
 @Service
+@org.springframework.context.annotation.Profile("!server-only")
 public class WaitlistService {
 
     private static final Logger logger = LoggerFactory.getLogger(WaitlistService.class);

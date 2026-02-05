@@ -124,6 +124,55 @@ public class EventsService {
         }
     }
 
+    /**
+     * Validates cookie by fetching events. Throws exception if cookie is invalid.
+     * Used for startup validation in server-only mode.
+     */
+    public void validateCookie(String cookies) throws Exception {
+        int selectedCityId = 1; // Use default city for validation
+        String eventsUrl = String.format(EVENTS_API_URL_BASE, "", selectedCityId);
+
+        HttpHeaders headers = createHeaders(cookies, selectedCityId);
+        HttpEntity<String> entity = new HttpEntity<>(headers);
+
+        try {
+            ResponseEntity<String> rawResponse = restTemplate.exchange(
+                eventsUrl,
+                HttpMethod.GET,
+                entity,
+                String.class
+            );
+
+            // Проверяем, что ответ действительно JSON
+            String responseBody = rawResponse.getBody();
+            if (responseBody != null && responseBody.trim().startsWith("<")) {
+                throw new IllegalStateException("API returned HTML instead of JSON. Cookie is invalid or expired.");
+            }
+
+            // Try to parse as JSON to ensure it's valid
+            ResponseEntity<EventsResponse> response = restTemplate.exchange(
+                eventsUrl,
+                HttpMethod.GET,
+                entity,
+                EventsResponse.class
+            );
+
+            if (response.getBody() == null) {
+                throw new IllegalStateException("API returned null response. Cookie may be invalid.");
+            }
+
+            logger.info("Cookie validation successful. API responded with valid JSON.");
+        } catch (org.springframework.web.client.ResourceAccessException e) {
+            throw new IllegalStateException("Network error during cookie validation: " + e.getMessage() + ". Cookie may be invalid or network unreachable.", e);
+        } catch (org.springframework.web.client.HttpClientErrorException e) {
+            throw new IllegalStateException("HTTP error during cookie validation (status: " + e.getStatusCode() + "). Cookie is invalid or expired.", e);
+        } catch (org.springframework.web.client.HttpServerErrorException e) {
+            throw new IllegalStateException("Server error during cookie validation (status: " + e.getStatusCode() + ").", e);
+        } catch (RestClientException e) {
+            throw new IllegalStateException("Error validating cookie: " + e.getMessage(), e);
+        }
+    }
+
     private HttpHeaders createHeaders(String cookies, int cityId) {
         HttpHeaders headers = new HttpHeaders();
         headers.set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36");
