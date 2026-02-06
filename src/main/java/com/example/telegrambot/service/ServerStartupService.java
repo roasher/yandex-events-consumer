@@ -7,15 +7,17 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.Arrays;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * Service that validates cookie on startup when running in server-only mode
- * If cookie is invalid or outdated, the server will crash
+ * Service that validates all environment variables and cookie on startup when running in server-only mode
+ * If any required variable is missing or invalid, the server will crash
  */
 @Service
 @Profile("server-only")
@@ -30,11 +32,23 @@ public class ServerStartupService implements CommandLineRunner {
     @Value("${events.api.cookies:}")
     private String apiCookies;
 
+    @Value("${events.poll.names:}")
+    private String pollEventNamesString;
+
+    @Value("${events.poll.start-time:}")
+    private String pollStartTimeString;
+
+    @Value("${events.poll.end-time:}")
+    private String pollEndTimeString;
+
     @Value("${events.default.city:}")
     private String defaultCityString;
 
     @Value("${events.default.categories:}")
     private String defaultCategoriesString;
+
+    @Value("${events.hold.links:}")
+    private String holdLinksString;
 
     // Dummy user ID for server-only mode
     public static final Long SERVER_USER_ID = 0L;
@@ -51,12 +65,10 @@ public class ServerStartupService implements CommandLineRunner {
     @Override
     public void run(String... args) {
         logger.info("Starting server-only mode initialization...");
+        logger.info("Validating all environment variables...");
 
-        // Validate cookie is provided
-        if (apiCookies == null || apiCookies.trim().isEmpty()) {
-            logger.error("EVENTS_API_COOKIES is not set or empty. Server cannot start without a valid cookie.");
-            throw new IllegalStateException("EVENTS_API_COOKIES must be set for server-only mode");
-        }
+        // Validate all environment variables
+        validateAllEnvironmentVariables();
 
         // Store cookie for server user
         userCookieService.setCookie(SERVER_USER_ID, apiCookies);
@@ -75,6 +87,187 @@ public class ServerStartupService implements CommandLineRunner {
             logger.error("Cookie validation failed. Server cannot start with an invalid or expired cookie.", e);
             logger.error("Server cannot start without a valid cookie. Exiting...");
             System.exit(1);
+        }
+    }
+
+    /**
+     * Validates all environment variables at startup
+     * Exits the application if any required variable is missing or invalid
+     */
+    private void validateAllEnvironmentVariables() {
+        boolean hasErrors = false;
+
+        // Validate required: EVENTS_API_COOKIES
+        if (apiCookies == null || apiCookies.trim().isEmpty() || apiCookies.trim().equals("your_cookies_here")) {
+            logger.error("❌ EVENTS_API_COOKIES is not set or contains placeholder value.");
+            logger.error("   Please set a valid cookie value in run-server-only.sh");
+            hasErrors = true;
+        } else {
+            logger.info("✅ EVENTS_API_COOKIES is set (length: {} chars)", apiCookies.length());
+        }
+
+        // Validate required: EVENTS_POLL_NAMES
+        String pollNames = pollEventNamesString != null ? pollEventNamesString.trim() : "";
+        // Also check environment variable as fallback
+        if (pollNames.isEmpty()) {
+            pollNames = System.getenv("EVENTS_POLL_NAMES");
+            if (pollNames != null) {
+                pollNames = pollNames.trim();
+            }
+        }
+        
+        if (pollNames == null || pollNames.isEmpty() || pollNames.equals("event_name_1,event_name_2")) {
+            logger.error("❌ EVENTS_POLL_NAMES is not set or contains placeholder value.");
+            logger.error("   Please set event names to watch (comma-separated) in run-server-only.sh");
+            hasErrors = true;
+        } else {
+            String[] names = pollNames.split(",");
+            int validNames = (int) Arrays.stream(names)
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .count();
+            if (validNames == 0) {
+                logger.error("❌ EVENTS_POLL_NAMES contains no valid event names.");
+                hasErrors = true;
+            } else {
+                logger.info("✅ EVENTS_POLL_NAMES is set with {} event name(s): {}", validNames, pollNames);
+            }
+        }
+
+        // Validate optional: EVENTS_POLL_START_TIME
+        if (pollStartTimeString != null && !pollStartTimeString.trim().isEmpty()) {
+            if (!validateTimeFormat(pollStartTimeString.trim())) {
+                logger.error("❌ EVENTS_POLL_START_TIME has invalid format: '{}'. Expected format: HH:mm (e.g., 09:00)", pollStartTimeString);
+                hasErrors = true;
+            } else {
+                logger.info("✅ EVENTS_POLL_START_TIME is set: {}", pollStartTimeString.trim());
+            }
+        } else {
+            logger.info("ℹ️  EVENTS_POLL_START_TIME is not set (polling will start immediately)");
+        }
+
+        // Validate optional: EVENTS_POLL_END_TIME
+        if (pollEndTimeString != null && !pollEndTimeString.trim().isEmpty()) {
+            if (!validateTimeFormat(pollEndTimeString.trim())) {
+                logger.error("❌ EVENTS_POLL_END_TIME has invalid format: '{}'. Expected format: HH:mm (e.g., 18:00)", pollEndTimeString);
+                hasErrors = true;
+            } else {
+                logger.info("✅ EVENTS_POLL_END_TIME is set: {}", pollEndTimeString.trim());
+            }
+        } else {
+            logger.info("ℹ️  EVENTS_POLL_END_TIME is not set (polling will run indefinitely)");
+        }
+
+        // Validate start/end time logic
+        if (pollStartTimeString != null && !pollStartTimeString.trim().isEmpty() &&
+            pollEndTimeString != null && !pollEndTimeString.trim().isEmpty()) {
+            try {
+                LocalTime startTime = LocalTime.parse(pollStartTimeString.trim(), DateTimeFormatter.ofPattern("HH:mm"));
+                LocalTime endTime = LocalTime.parse(pollEndTimeString.trim(), DateTimeFormatter.ofPattern("HH:mm"));
+                
+                // Check if end time is before start time (spanning midnight is allowed)
+                if (endTime.isBefore(startTime)) {
+                    logger.info("ℹ️  Polling window spans midnight: {} - {}", startTime, endTime);
+                } else if (startTime.equals(endTime)) {
+                    logger.warn("⚠️  EVENTS_POLL_START_TIME and EVENTS_POLL_END_TIME are the same: {}", startTime);
+                } else {
+                    logger.info("✅ Polling window: {} - {}", startTime, endTime);
+                }
+            } catch (DateTimeParseException e) {
+                // Already validated above, but just in case
+                logger.error("❌ Error parsing time values: {}", e.getMessage());
+                hasErrors = true;
+            }
+        }
+
+        // Validate optional: EVENTS_DEFAULT_CITY
+        if (defaultCityString != null && !defaultCityString.trim().isEmpty()) {
+            try {
+                Integer cityId = Integer.parseInt(defaultCityString.trim());
+                if (cityId <= 0) {
+                    logger.error("❌ EVENTS_DEFAULT_CITY must be a positive integer. Got: {}", cityId);
+                    hasErrors = true;
+                } else {
+                    logger.info("✅ EVENTS_DEFAULT_CITY is set: {}", cityId);
+                }
+            } catch (NumberFormatException e) {
+                logger.error("❌ EVENTS_DEFAULT_CITY has invalid format: '{}'. Expected a positive integer.", defaultCityString);
+                hasErrors = true;
+            }
+        } else {
+            logger.info("ℹ️  EVENTS_DEFAULT_CITY is not set (will use default: city ID 1)");
+        }
+
+        // Validate optional: EVENTS_DEFAULT_CATEGORIES
+        if (defaultCategoriesString != null && !defaultCategoriesString.trim().isEmpty()) {
+            try {
+                String[] categoryStrings = defaultCategoriesString.split(",");
+                boolean hasInvalid = false;
+                for (String catStr : categoryStrings) {
+                    try {
+                        int catId = Integer.parseInt(catStr.trim());
+                        if (catId <= 0) {
+                            logger.error("❌ EVENTS_DEFAULT_CATEGORIES contains invalid category ID: {}. Must be positive integer.", catId);
+                            hasInvalid = true;
+                        }
+                    } catch (NumberFormatException e) {
+                        logger.error("❌ EVENTS_DEFAULT_CATEGORIES contains invalid format: '{}'. Expected comma-separated integers.", catStr);
+                        hasInvalid = true;
+                    }
+                }
+                if (!hasInvalid) {
+                    Set<Integer> categoryIds = Arrays.stream(categoryStrings)
+                        .map(String::trim)
+                        .filter(s -> !s.isEmpty())
+                        .map(Integer::parseInt)
+                        .collect(Collectors.toSet());
+                    logger.info("✅ EVENTS_DEFAULT_CATEGORIES is set: {}", categoryIds);
+                } else {
+                    hasErrors = true;
+                }
+            } catch (Exception e) {
+                logger.error("❌ EVENTS_DEFAULT_CATEGORIES has invalid format: '{}'. Expected comma-separated integers.", defaultCategoriesString);
+                hasErrors = true;
+            }
+        } else {
+            logger.info("ℹ️  EVENTS_DEFAULT_CATEGORIES is not set (will use all categories)");
+        }
+
+        // Validate optional: EVENTS_HOLD_LINKS (just log, no strict validation needed)
+        if (holdLinksString != null && !holdLinksString.trim().isEmpty()) {
+            logger.info("✅ EVENTS_HOLD_LINKS is set: {}", holdLinksString);
+        } else {
+            logger.info("ℹ️  EVENTS_HOLD_LINKS is not set (no events will be held)");
+        }
+
+        // Exit if any validation errors
+        if (hasErrors) {
+            logger.error("");
+            logger.error("═══════════════════════════════════════════════════════════════");
+            logger.error("❌ ENVIRONMENT VARIABLE VALIDATION FAILED");
+            logger.error("═══════════════════════════════════════════════════════════════");
+            logger.error("Please fix the errors above and update run-server-only.sh with correct values.");
+            logger.error("Server cannot start with invalid configuration. Exiting...");
+            logger.error("═══════════════════════════════════════════════════════════════");
+            System.exit(1);
+        }
+
+        logger.info("");
+        logger.info("═══════════════════════════════════════════════════════════════");
+        logger.info("✅ ALL ENVIRONMENT VARIABLES VALIDATED SUCCESSFULLY");
+        logger.info("═══════════════════════════════════════════════════════════════");
+    }
+
+    /**
+     * Validates time format (HH:mm)
+     */
+    private boolean validateTimeFormat(String timeString) {
+        try {
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("HH:mm");
+            LocalTime.parse(timeString, formatter);
+            return true;
+        } catch (DateTimeParseException e) {
+            return false;
         }
     }
 
