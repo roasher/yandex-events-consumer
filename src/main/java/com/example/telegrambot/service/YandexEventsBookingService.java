@@ -1,5 +1,6 @@
 package com.example.telegrambot.service;
 
+import com.example.telegrambot.exception.RateLimitException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
@@ -87,6 +88,10 @@ public class YandexEventsBookingService {
         ResponseEntity<String> response = restTemplate.postForEntity(BOOKING_URL, entity, String.class);
         logger.info("Booking response status: {}", response.getStatusCode());
         logger.info("Booking response body: {}", response.getBody());
+
+        if (response.getStatusCode().value() == 429) {
+            throw new RateLimitException("Booking API rate limited (429). Retry after delay.");
+        }
 
         try {
             return objectMapper.readTree(response.getBody());

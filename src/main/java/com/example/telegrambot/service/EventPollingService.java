@@ -2,6 +2,7 @@ package com.example.telegrambot.service;
 
 import com.example.telegrambot.bot.TelegramBot;
 import com.example.telegrambot.dto.Event;
+import com.example.telegrambot.exception.RateLimitException;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,6 +34,12 @@ public class EventPollingService {
     // Используем String и парсим вручную, чтобы поддерживать и YAML массивы, и comma-separated env vars
     @Value("${events.poll.names:}")
     private String pollEventNamesString;
+
+    @Value("${events.poll.booking-delay-ms}")
+    private long bookingDelayMs;
+
+    @Value("${events.poll.rate-limit-retry-delay-ms}")
+    private long rateLimitRetryDelayMs;
     
     // Прямое чтение из System.getenv() как fallback (для случаев когда Spring Boot не видит env var)
     private String getPollEventNamesFromEnv() {
@@ -269,13 +276,34 @@ public class EventPollingService {
                 return;
             }
 
-            // Бронируем событие
-            var response = bookingService.book(
-                userCookie,
-                referer,
-                DEFAULT_USER_AGENT,
-                new YandexEventsBookingService.BookingRequest(slotId, 0, 0)
-            );
+            // Бронируем событие с retry при 429
+            JsonNode response = null;
+            int maxRetries = 3;
+            for (int attempt = 1; attempt <= maxRetries; attempt++) {
+                try {
+                    response = bookingService.book(
+                        userCookie,
+                        referer,
+                        DEFAULT_USER_AGENT,
+                        new YandexEventsBookingService.BookingRequest(slotId, 0, 0)
+                    );
+                    break;
+                } catch (RateLimitException e) {
+                    if (attempt < maxRetries) {
+                        logger.warn("Rate limited (429) for event {}, waiting {} ms before retry {}/{}",
+                            eventTitle, rateLimitRetryDelayMs, attempt, maxRetries);
+                        Thread.sleep(rateLimitRetryDelayMs);
+                    } else {
+                        logger.warn("Rate limited (429) for event {} after {} retries, skipping for this cycle",
+                            eventTitle, maxRetries);
+                        throw e;
+                    }
+                }
+            }
+
+            if (response == null) {
+                return;
+            }
 
             // Проверяем успешность регистрации
             boolean registrationSuccessful = response.has("startDatetime") && response.get("startDatetime").asText() != null;
@@ -283,12 +311,22 @@ public class EventPollingService {
             if (registrationSuccessful) {
                 logger.info("Successfully booked event: {} (ID: {})", eventTitle, eventId);
                 bookedEventIds.add(eventId);
-                
+
                 // Отправляем уведомление пользователю
                 sendBookingNotification(eventTitle, eventId);
+
+                // Задержка перед следующей попыткой бронирования (избегаем 429)
+                if (bookingDelayMs > 0) {
+                    Thread.sleep(bookingDelayMs);
+                }
             } else {
                 logger.warn("Failed to book event: {} (ID: {}). Response: {}", eventTitle, eventId, response);
             }
+        } catch (RateLimitException e) {
+            logger.warn("Rate limited for event {}, will retry next poll cycle: {}", eventTitle, e.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.warn("Interrupted while waiting for rate limit retry or booking delay");
         } catch (Exception e) {
             logger.error("Error checking/booking event {}: {}", eventTitle, e.getMessage(), e);
         }

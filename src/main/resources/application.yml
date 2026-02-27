@@ -67,6 +67,14 @@ events:
     # If not set and start-time is set, polling will run indefinitely until manually stopped
     end-time: ""
 
+    # Delay in ms between successful booking attempts (avoids 429 rate limit)
+    # Can also be set via environment variable: EVENTS_POLL_BOOKING_DELAY_MS
+    booking-delay-ms: 1500
+
+    # Delay in ms to wait before retrying after 429 rate limit response
+    # Can also be set via environment variable: EVENTS_POLL_RATE_LIMIT_RETRY_DELAY_MS
+    rate-limit-retry-delay-ms: 5000
+
   # Event hold configuration
   hold:
     # List of event links (URLs) or event IDs to hold (disable booking) on startup
