@@ -8,6 +8,10 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 
 import jakarta.annotation.PreDestroy;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
 @SpringBootApplication
 @EnableScheduling
 public class TelegramBotApplication {
@@ -15,7 +19,19 @@ public class TelegramBotApplication {
     private static final Logger logger = LoggerFactory.getLogger(TelegramBotApplication.class);
 
     public static void main(String[] args) {
+        ensureLogsDirectoryExists();
         SpringApplication.run(TelegramBotApplication.class, args);
+    }
+
+    private static void ensureLogsDirectoryExists() {
+        try {
+            Path logsDir = Path.of("logs");
+            if (!Files.exists(logsDir)) {
+                Files.createDirectories(logsDir);
+            }
+        } catch (IOException e) {
+            System.err.println("Failed to create logs directory: " + e.getMessage());
+        }
     }
 
     @PreDestroy

@@ -211,6 +211,13 @@ public class EventPollingService {
                 return;
             }
 
+            // Log watched events being evaluated (title, id, haveFreeSeats, freeSeats) for debugging
+            logger.info("Watched events to evaluate ({}): {}", watchedEvents.size(),
+                watchedEvents.stream()
+                    .map(e -> String.format("%s (id=%s, haveFreeSeats=%s, freeSeats=%d)",
+                        e.getTitle(), e.getId(), e.isHaveFreeSeats(), e.getFreeSeats()))
+                    .collect(Collectors.joining("; ")));
+
             // Проверяем каждое отслеживаемое событие
             for (Event event : watchedEvents) {
                 checkAndBookEvent(event);
@@ -230,19 +237,19 @@ public class EventPollingService {
         try {
             // Если событие уже было забронировано, пропускаем
             if (bookedEventIds.contains(eventId)) {
-                logger.debug("Event {} already booked, skipping", eventTitle);
+                logger.info("Skipping {} (id={}): already booked in this session", eventTitle, eventId);
                 return;
             }
 
             // Если событие захолжено, не бронируем
             if (eventHoldService.isEventHeld(eventId)) {
-                logger.debug("Event {} is held, skipping booking", eventTitle);
+                logger.info("Skipping {} (id={}): event is held", eventTitle, eventId);
                 return;
             }
 
             // Проверяем, есть ли свободные места
             if (!event.isHaveFreeSeats()) {
-                logger.debug("Event {} has no free seats, skipping", eventTitle);
+                logger.info("Skipping {} (id={}): no free seats (freeSeats={})", eventTitle, eventId, event.getFreeSeats());
                 return;
             }
 
@@ -265,7 +272,8 @@ public class EventPollingService {
             }
 
             // Пытаемся забронировать событие
-            logger.info("Attempting to book event: {} (ID: {})", eventTitle, eventId);
+            logger.info("Attempting to book event: {} (ID: {}, haveFreeSeats={}, freeSeats={})", 
+                eventTitle, eventId, event.isHaveFreeSeats(), event.getFreeSeats());
 
             // Получаем доступные слоты
             JsonNode slotsJson = bookingService.getTimeSlots(eventId, userCookie, referer, DEFAULT_USER_AGENT);
@@ -400,6 +408,6 @@ public class EventPollingService {
         } catch (Exception e) {
             logger.error("Error sending booking notification to chatId {}: {}", pollingChatId, e.getMessage(), e);
         }
-    }
+        }
 }
 
