@@ -66,12 +66,28 @@ public class ScheduledPollingService {
             }
         }
 
-        // If times are not configured, start polling immediately
+        // Do NOT start polling here - it runs before cookie is set (race condition).
+        // Polling is started by ServerStartupService after cookie validation.
         if (!timesConfigured) {
-            logger.info("No poll start/end times configured. Starting polling immediately...");
+            logger.info("No poll start/end times configured. Polling will start after cookie validation.");
+        } else {
+            logger.info("Polling will start after cookie validation (if within window {} - {})",
+                startTime, endTime != null ? endTime : "no end");
+        }
+    }
+
+    /**
+     * Starts polling if configured. Called by ServerStartupService after cookie is set and validated.
+     * Ensures no race condition where first poll runs before cookie is available.
+     */
+    public void startPollingIfConfigured() {
+        if (pollingStarted) {
+            return;
+        }
+        if (!timesConfigured) {
+            logger.info("No poll start/end times configured. Starting polling...");
             startPolling();
         } else {
-            // Check if we're within the time window and should start immediately
             checkAndStartIfWithinWindow();
         }
     }
