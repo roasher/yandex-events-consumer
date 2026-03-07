@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- Unique timestamp per JVM run for separate log file per server run -->
+    <timestamp key="runTimestamp" datePattern="yyyy-MM-dd_HH-mm-ss"/>
+
+    <!-- Console appender (unchanged) -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <!-- File appender: one file per server run in logs/ folder -->
+    <appender name="RUN_FILE" class="ch.qos.logback.core.FileAppender">
+        <file>logs/run-${runTimestamp}.log</file>
+        <append>false</append>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="RUN_FILE"/>
+    </root>
+</configuration>

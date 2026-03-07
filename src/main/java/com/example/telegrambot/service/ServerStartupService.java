@@ -28,6 +28,7 @@ public class ServerStartupService implements CommandLineRunner {
     private final EventsService eventsService;
     private final UserCookieService userCookieService;
     private final UserPreferencesService userPreferencesService;
+    private final ScheduledPollingService scheduledPollingService;
 
     @Value("${events.api.cookies:}")
     private String apiCookies;
@@ -56,10 +57,12 @@ public class ServerStartupService implements CommandLineRunner {
     public ServerStartupService(
             EventsService eventsService,
             UserCookieService userCookieService,
-            UserPreferencesService userPreferencesService) {
+            UserPreferencesService userPreferencesService,
+            ScheduledPollingService scheduledPollingService) {
         this.eventsService = eventsService;
         this.userCookieService = userCookieService;
         this.userPreferencesService = userPreferencesService;
+        this.scheduledPollingService = scheduledPollingService;
     }
 
     @Override
@@ -82,6 +85,7 @@ public class ServerStartupService implements CommandLineRunner {
         try {
             eventsService.validateCookie(apiCookies);
             logger.info("Cookie validation successful!");
+            scheduledPollingService.startPollingIfConfigured();
             logger.info("Server startup validation completed successfully.");
         } catch (Exception e) {
             logger.error("Cookie validation failed. Server cannot start with an invalid or expired cookie.", e);
