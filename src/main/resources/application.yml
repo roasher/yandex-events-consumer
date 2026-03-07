@@ -69,7 +69,7 @@ events:
 
     # Delay in ms between successful booking attempts (avoids 429 rate limit)
     # Can also be set via environment variable: EVENTS_POLL_BOOKING_DELAY_MS
-    booking-delay-ms: 1500
+    booking-delay-ms: 6000
 
     # Delay in ms to wait before retrying after 429 rate limit response
     # Can also be set via environment variable: EVENTS_POLL_RATE_LIMIT_RETRY_DELAY_MS
