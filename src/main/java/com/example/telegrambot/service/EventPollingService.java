@@ -40,7 +40,10 @@ public class EventPollingService {
 
     @Value("${events.poll.rate-limit-retry-delay-ms}")
     private long rateLimitRetryDelayMs;
-    
+
+    @Value("${events.poll.rate-limit-retry-count}")
+    private int rateLimitRetryCount;
+
     // Прямое чтение из System.getenv() как fallback (для случаев когда Spring Boot не видит env var)
     private String getPollEventNamesFromEnv() {
         // Пробуем разные варианты имени переменной
@@ -286,8 +289,11 @@ public class EventPollingService {
 
             // Бронируем событие с retry при 429
             JsonNode response = null;
-            int maxRetries = 3;
-            for (int attempt = 1; attempt <= maxRetries; attempt++) {
+            int maxRetries = rateLimitRetryCount;
+            boolean infiniteRetries = maxRetries < 0;
+            int attempt = 1;
+
+            while (infiniteRetries || attempt <= maxRetries) {
                 try {
                     response = bookingService.book(
                         userCookie,
@@ -297,15 +303,20 @@ public class EventPollingService {
                     );
                     break;
                 } catch (RateLimitException e) {
-                    if (attempt < maxRetries) {
-                        logger.warn("Rate limited (429) for event {}, waiting {} ms before retry {}/{}",
-                            eventTitle, rateLimitRetryDelayMs, attempt, maxRetries);
-                        Thread.sleep(rateLimitRetryDelayMs);
-                    } else {
+                    if (!infiniteRetries && attempt >= maxRetries) {
                         logger.warn("Rate limited (429) for event {} after {} retries, skipping for this cycle",
                             eventTitle, maxRetries);
                         throw e;
                     }
+                    if (infiniteRetries) {
+                        logger.warn("Rate limited (429) for event {}, waiting {} ms before retry {} (no limit)",
+                            eventTitle, rateLimitRetryDelayMs, attempt);
+                    } else {
+                        logger.warn("Rate limited (429) for event {}, waiting {} ms before retry {}/{}",
+                            eventTitle, rateLimitRetryDelayMs, attempt, maxRetries);
+                    }
+                    Thread.sleep(rateLimitRetryDelayMs);
+                    attempt++;
                 }
             }
 
