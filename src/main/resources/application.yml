@@ -47,9 +47,8 @@ events:
 
   # Event polling configuration
   poll:
-    # List of event names to watch for availability
-    # When an event with one of these names becomes available, it will be automatically booked
-    # Example: ["Event Name 1", "Event Name 2", "Event Name 3"]
+    # Ordered list of poll targets (sequential priority). Optional :1-:7 = day of week (Mon-Sun).
+    # Example: Плавание:3,Плавание:1,теннис,Boxing (Красная Роза):2
     # Can also be set via environment variable: EVENTS_POLL_NAMES (comma-separated)
     names: []
     

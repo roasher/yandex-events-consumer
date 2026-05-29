@@ -11,7 +11,9 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
@@ -60,8 +62,11 @@ public class EventPollingService {
         return value;
     }
 
-    // Множество имен событий для отслеживания
-    private Set<String> watchedEventNames = new HashSet<>();
+    // Ordered poll targets (priority: first entry is tried first, sequentially)
+    private List<PollTarget> pollTargets = new ArrayList<>();
+
+    // Index of the current target in pollTargets (sequential booking)
+    private volatile int currentTargetIndex = 0;
 
     // Множество eventId, которые уже были забронированы (чтобы не пытаться повторно)
     private final Set<String> bookedEventIds = ConcurrentHashMap.newKeySet();
@@ -119,19 +124,12 @@ public class EventPollingService {
         }
         
         if (namesToParse != null && !namesToParse.trim().isEmpty()) {
-            // Разбиваем по запятой (работает и для YAML массивов, которые Spring Boot конвертирует в строку)
-            String[] nameArray = namesToParse.split(",");
-            for (String name : nameArray) {
-                String trimmed = name != null ? name.trim() : "";
-                if (!trimmed.isEmpty()) {
-                    // Сохраняем в нижнем регистре для case-insensitive сравнения
-                    watchedEventNames.add(trimmed.toLowerCase());
-                }
-            }
-            logger.info("Initialized watched event names (case-insensitive): {}", watchedEventNames);
+            pollTargets = PollTarget.parseList(namesToParse);
+            logger.info("Initialized {} poll target(s) (sequential priority): {}", pollTargets.size(), pollTargets);
         } else {
             logger.warn("No event names configured for polling. " +
-                "Set EVENTS_POLL_NAMES environment variable (comma-separated, e.g., 'EVENTS_POLL_NAMES=бег,другое событие'). " +
+                "Set EVENTS_POLL_NAMES environment variable (comma-separated, e.g., 'EVENTS_POLL_NAMES=бег,другое событие' " +
+                "or 'Плавание:3,Плавание:1,теннис' where :1-:7 is day of week Mon-Sun). " +
                 "Note: When running from IntelliJ, set it in Run Configuration → Environment variables");
         }
     }
@@ -140,13 +138,14 @@ public class EventPollingService {
      * Включает опрос для указанного пользователя
      */
     public boolean startPolling(Long userId, Long chatId) {
-        if (watchedEventNames.isEmpty()) {
+        if (pollTargets.isEmpty()) {
             logger.warn("Cannot start polling: no event names configured");
             return false;
         }
         pollingEnabled = true;
         pollingUserId = userId;
         pollingChatId = chatId;
+        currentTargetIndex = 0;
         bookedEventIds.clear(); // Очищаем список забронированных событий при старте
         logger.info("Event polling started for user {} (chatId: {})", userId, chatId);
         return true;
@@ -187,53 +186,90 @@ public class EventPollingService {
             return;
         }
 
+        if (currentTargetIndex >= pollTargets.size()) {
+            logger.debug("All poll targets completed ({} total)", pollTargets.size());
+            return;
+        }
+
         try {
-            // Получаем список событий для пользователя
             List<Event> events = eventsService.getEvents(pollingUserId);
             if (events == null || events.isEmpty()) {
                 logger.debug("No events found for polling");
                 return;
             }
 
-            // Фильтруем события по именам из списка отслеживания (case-insensitive, substring matching)
-            List<Event> watchedEvents = events.stream()
-                .filter(event -> {
-                    String eventTitle = event.getTitle();
-                    if (eventTitle == null) {
-                        return false;
-                    }
-                    String eventTitleLower = eventTitle.toLowerCase();
-                    // Проверяем, содержит ли название события любое из отслеживаемых имен (substring matching)
-                    return watchedEventNames.stream()
-                        .anyMatch(watchedName -> eventTitleLower.contains(watchedName));
-                })
+            PollTarget target = pollTargets.get(currentTargetIndex);
+            List<Event> matchingEvents = events.stream()
+                .filter(target::matchesEvent)
                 .collect(Collectors.toList());
 
-            if (watchedEvents.isEmpty()) {
-                logger.debug("No watched events found in current events list");
+            if (matchingEvents.isEmpty()) {
+                logger.debug("Poll target [{}] ({}/{}): no matching events in list yet",
+                    target, currentTargetIndex + 1, pollTargets.size());
                 return;
             }
 
-            // Log watched events being evaluated (title, id, haveFreeSeats, freeSeats) for debugging
-            logger.info("Watched events to evaluate ({}): {}", watchedEvents.size(),
-                watchedEvents.stream()
+            logger.info("Poll target [{}] ({}/{}): {} matching event(s): {}",
+                target, currentTargetIndex + 1, pollTargets.size(), matchingEvents.size(),
+                matchingEvents.stream()
                     .map(e -> String.format("%s (id=%s, haveFreeSeats=%s, freeSeats=%d)",
                         e.getTitle(), e.getId(), e.isHaveFreeSeats(), e.getFreeSeats()))
                     .collect(Collectors.joining("; ")));
 
-            // Проверяем каждое отслеживаемое событие
-            for (Event event : watchedEvents) {
-                checkAndBookEvent(event);
+            boolean anyFreeSeats = matchingEvents.stream().anyMatch(Event::isHaveFreeSeats);
+            if (!anyFreeSeats) {
+                logger.info("Poll target [{}]: all matching events have no free seats — target lost, advancing",
+                    target);
+                advanceToNextTarget("no free seats");
+                return;
+            }
+
+            for (Event event : matchingEvents) {
+                if (!event.isHaveFreeSeats()) {
+                    continue;
+                }
+                BookingAttemptResult result = checkAndBookEvent(event);
+                if (result == BookingAttemptResult.BOOKED || result == BookingAttemptResult.ALREADY_BOOKED) {
+                    advanceToNextTarget(result == BookingAttemptResult.BOOKED ? "booked" : "already booked");
+                    return;
+                }
+                if (result == BookingAttemptResult.RATE_LIMITED) {
+                    return;
+                }
             }
         } catch (Exception e) {
             logger.error("Error in event polling task", e);
         }
     }
 
+    private void advanceToNextTarget(String reason) {
+        if (currentTargetIndex >= pollTargets.size()) {
+            return;
+        }
+        PollTarget completed = pollTargets.get(currentTargetIndex);
+        currentTargetIndex++;
+        if (currentTargetIndex < pollTargets.size()) {
+            logger.info("Poll target [{}] done ({}). Next target: [{}] ({}/{})",
+                completed, reason, pollTargets.get(currentTargetIndex),
+                currentTargetIndex + 1, pollTargets.size());
+        } else {
+            logger.info("Poll target [{}] done ({}). All {} poll target(s) completed.",
+                completed, reason, pollTargets.size());
+        }
+    }
+
+    private enum BookingAttemptResult {
+        BOOKED,
+        ALREADY_BOOKED,
+        SKIPPED,
+        RATE_LIMITED,
+        FAILED
+    }
+
     /**
      * Проверяет событие и бронирует его, если оно доступно
      */
-    private void checkAndBookEvent(Event event) {
+    private BookingAttemptResult checkAndBookEvent(Event event) {
         String eventId = event.getId();
         String eventTitle = event.getTitle();
 
@@ -241,26 +277,23 @@ public class EventPollingService {
             // Если событие уже было забронировано, пропускаем
             if (bookedEventIds.contains(eventId)) {
                 logger.info("Skipping {} (id={}): already booked in this session", eventTitle, eventId);
-                return;
+                return BookingAttemptResult.ALREADY_BOOKED;
             }
 
-            // Если событие захолжено, не бронируем
             if (eventHoldService.isEventHeld(eventId)) {
                 logger.info("Skipping {} (id={}): event is held", eventTitle, eventId);
-                return;
+                return BookingAttemptResult.SKIPPED;
             }
 
-            // Проверяем, есть ли свободные места
             if (!event.isHaveFreeSeats()) {
                 logger.info("Skipping {} (id={}): no free seats (freeSeats={})", eventTitle, eventId, event.getFreeSeats());
-                return;
+                return BookingAttemptResult.SKIPPED;
             }
 
-            // Проверяем, не зарегистрирован ли уже пользователь
             String userCookie = userCookieService.getCookie(pollingUserId);
             if (userCookie == null || userCookie.isEmpty()) {
                 logger.warn("No cookie found for user {}, cannot book event", pollingUserId);
-                return;
+                return BookingAttemptResult.FAILED;
             }
 
             int cityId = event.getCity() != null ? event.getCity().getId() : 1;
@@ -271,7 +304,7 @@ public class EventPollingService {
             if (isAlreadyBooked) {
                 logger.info("User {} is already booked for event {}", pollingUserId, eventTitle);
                 bookedEventIds.add(eventId);
-                return;
+                return BookingAttemptResult.ALREADY_BOOKED;
             }
 
             // Пытаемся забронировать событие
@@ -284,7 +317,7 @@ public class EventPollingService {
 
             if (slotId == null || slotId <= 0) {
                 logger.warn("No available slots for event {}", eventTitle);
-                return;
+                return BookingAttemptResult.FAILED;
             }
 
             // Бронируем событие с retry при 429
@@ -321,33 +354,34 @@ public class EventPollingService {
             }
 
             if (response == null) {
-                return;
+                return BookingAttemptResult.FAILED;
             }
 
-            // Проверяем успешность регистрации
             boolean registrationSuccessful = response.has("startDatetime") && response.get("startDatetime").asText() != null;
 
             if (registrationSuccessful) {
                 logger.info("Successfully booked event: {} (ID: {})", eventTitle, eventId);
                 bookedEventIds.add(eventId);
-
-                // Отправляем уведомление пользователю
                 sendBookingNotification(eventTitle, eventId);
 
-                // Задержка перед следующей попыткой бронирования (избегаем 429)
                 if (bookingDelayMs > 0) {
                     Thread.sleep(bookingDelayMs);
                 }
-            } else {
-                logger.warn("Failed to book event: {} (ID: {}). Response: {}", eventTitle, eventId, response);
+                return BookingAttemptResult.BOOKED;
             }
+
+            logger.warn("Failed to book event: {} (ID: {}). Response: {}", eventTitle, eventId, response);
+            return BookingAttemptResult.FAILED;
         } catch (RateLimitException e) {
-            logger.warn("Rate limited for event {}, will retry next poll cycle: {}", eventTitle, e.getMessage());
+            logger.warn("Rate limited for event {}, will retry current poll target: {}", eventTitle, e.getMessage());
+            return BookingAttemptResult.RATE_LIMITED;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             logger.warn("Interrupted while waiting for rate limit retry or booking delay");
+            return BookingAttemptResult.FAILED;
         } catch (Exception e) {
             logger.error("Error checking/booking event {}: {}", eventTitle, e.getMessage(), e);
+            return BookingAttemptResult.FAILED;
         }
     }
 
